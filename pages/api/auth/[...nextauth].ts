@@ -1,54 +1,65 @@
-import bcrypt from 'bcrypt';
-import NextAuth, { NextAuthOptions } from 'next-auth';
-import CredentialsProvider from 'next-auth/providers/credentials';
-import { MongoDBAdapter } from '@next-auth/mongodb-adapter';
+// pages/api/auth/[...nextauth].ts
+import type { NextApiRequest, NextApiResponse } from "next";
+import NextAuth, { type NextAuthOptions } from "next-auth";
+import CredentialsProvider from "next-auth/providers/credentials";
+import { PrismaAdapter } from "@next-auth/prisma-adapter";
+import { compare } from "bcryptjs";     // <-- swap to bcryptjs
 
-import prisma from '@/libs/prismadb';
-import clientPromise from '@/libs/mongodb';
+import prisma from "@/libs/prismadb";
 
 export const authOptions: NextAuthOptions = {
-  adapter: MongoDBAdapter(clientPromise),
+  adapter: PrismaAdapter(prisma),
+  session: { strategy: "jwt" },
+  secret: process.env.NEXTAUTH_SECRET,
+  debug: true,
+
   providers: [
     CredentialsProvider({
-      name: 'credentials',
+      name: "credentials",
       credentials: {
-        email: { label: 'email', type: 'text' },
-        password: { label: 'password', type: 'password' },
+        email: { label: "email", type: "text" },
+        password: { label: "password", type: "password" },
       },
       async authorize(credentials) {
-        if (!credentials?.email || !credentials?.password) {
-          throw new Error('Invalid credentials');
+        try {
+          if (!credentials?.email || !credentials?.password) {
+            return null; // -> 401
+          }
+
+          const user = await prisma.user.findUnique({
+            where: { email: credentials.email },
+          });
+          if (!user || !user.hashedPassword) {
+            return null; // -> 401
+          }
+
+          const ok = await compare(credentials.password, user.hashedPassword);
+          if (!ok) return null; // -> 401
+
+          // Minimal user object
+          return { id: user.id, name: user.name ?? null, email: user.email, image: user.image ?? null };
+        } catch (err) {
+          console.error("authorize error:", err);
+          throw err; // truly unexpected -> 500 (but now we’ll see the log)
         }
-
-        const user = await prisma.user.findUnique({
-          where: { email: credentials.email },
-        });
-
-        if (!user || !user?.hashedPassword) {
-          throw new Error('Invalid credentials');
-        }
-
-        const isCorrectPassword = await bcrypt.compare(
-          credentials.password,
-          user.hashedPassword
-        );
-
-        if (!isCorrectPassword) {
-          throw new Error('Invalid credentials');
-        }
-
-        return user;
       },
     }),
   ],
-  debug: process.env.NODE_ENV === 'development',
-  session: {
-    strategy: 'jwt',
+
+  callbacks: {
+    async jwt({ token, user }) {
+      if (user) token.id = (user as any).id;
+      return token;
+    },
+    async session({ session, token }) {
+      if (session.user && token?.id) (session.user as any).id = token.id;
+      return session;
+    },
   },
-  jwt: {
-    secret: process.env.NEXTAUTH_JWT_SECRET,
-  },
-  secret: process.env.NEXTAUTH_SECRET,
 };
 
-export default NextAuth(authOptions);
+export default function auth(req: NextApiRequest, res: NextApiResponse) {
+  return NextAuth(req, res, authOptions);
+}
+
+export const config = { runtime: "nodejs" };

@@ -2,7 +2,7 @@ import useLoginModal from '@/hooks/useLoginModal'
 import React, { useCallback, useState } from 'react'
 import Input from '../Input';
 import Modal from '../Modal';
-import RegisterModal from './RegisterModal';
+import RegisterModal from '@/components/modals/RegisterModal';
 import useRegisterModal from '@/hooks/useRegisterModal';
 import { signIn } from 'next-auth/react';
 
